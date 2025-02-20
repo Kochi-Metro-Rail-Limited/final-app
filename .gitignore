@@ -1,0 +1,17 @@
+# Ignore node_modules (for Node.js projects)
+node_modules/
+
+# Ignore compiled files
+*.class
+*.o
+*.out
+*.pyc
+
+# Ignore logs and system files
+logs/
+*.log
+.DS_Store
+
+# Ignore environment files
+.env
+/myenv
