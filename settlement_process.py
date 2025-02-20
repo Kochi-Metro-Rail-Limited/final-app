@@ -486,6 +486,17 @@ class Process:
                     how='outer'
                 )
 
+                # Fill ONDCapp for settlement-only records
+                merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
+
+                # Fill all ID-related columns based on the mapping
+                if mapping['match_col'] == 'TicketNUmber':
+                    merged['TicketNUmber'] = merged['TicketNUmber'].fillna(merged[mapping['id_col']])
+                elif mapping['match_col'] == 'order_id':
+                    merged['order_id'] = merged['order_id'].fillna(merged[mapping['id_col']])
+                elif mapping['match_col'] == 'transaction_ref_no':
+                    merged['transaction_ref_no'] = merged['transaction_ref_no'].fillna(merged[mapping['id_col']])
+
                 # Set result based on conditions
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
