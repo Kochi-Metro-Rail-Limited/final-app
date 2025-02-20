@@ -327,24 +327,33 @@ class ExcelUploader(QWidget):
             is_refund = merged_df['descCode'].str.upper() == 'REFUND'
             amounts_match = np.isclose(merged_df['QRCodePrice'], merged_df['total_amount'], atol=0.01)
             full_refund = np.isclose(merged_df['QRCodePrice'], -merged_df['total_amount'], atol=0.01)
+            triffi_revenue_more = merged_df['total_amount'] > merged_df['QRCodePrice']
+            triffi_revenue_zero = merged_df['total_amount'] == 0
+            afc_revenue_more = merged_df['QRCodePrice'] > merged_df['total_amount']
 
             # Categorize each record
             conditions = [
                 (merged_df['_merge'] == 'left_only'),
                 (merged_df['_merge'] == 'right_only'),
-                (merged_df['_merge'] == 'both') & amounts_match,
                 (merged_df['_merge'] == 'both') & is_refund,
+                (merged_df['_merge'] == 'both') & amounts_match,
                 (merged_df['_merge'] == 'both') & full_refund,
+                (merged_df['_merge'] == 'both') & triffi_revenue_zero,
+                (merged_df['_merge'] == 'both') & afc_revenue_more,
+                (merged_df['_merge'] == 'both') & triffi_revenue_more,
                 (merged_df['_merge'] == 'both')  # catches any remaining 'both' cases
             ]
             
             choices = [
                 'In AFC but not in Triffy',
                 'In Triffy but not in AFC',
-                'AFC = Triffy',
                 'AFC Refund but Triffy Booked',
+                'AFC = Triffy',
                 'AFC Triffy Full Refund',
-                'AFC Triffy Unequal'
+                'In AFC but not in Triffy',
+                'AFC Revenue More than Triffy',
+                'Triffy Revenue More than AFC',
+                'Misc'
             ]
             
             merged_df['Remark'] = np.select(conditions, choices, default='Uncategorized')

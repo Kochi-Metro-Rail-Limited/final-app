@@ -489,6 +489,9 @@ class Process:
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
 
+                # Add settlement date column
+                merged['insertDT'] = merged[mapping['date_col']] 
+
                 # Fill all ID-related columns based on the mapping
                 if mapping['match_col'] == 'TicketNUmber':
                     merged['TicketNUmber'] = merged['TicketNUmber'].fillna(merged[mapping['id_col']])
