@@ -420,25 +420,39 @@ class Process:
                 mapping = self.app_mapping[app_name]
                 date_col = mapping['date_col']
                 
-                # Print debug info
-                print(f"\n[{app_name}] Processing dates:")
-                print(f"  Date column: {date_col}")
-                print(f"  Sample dates: {df[date_col].head().tolist()}")
+                # Print debug info before processing
+                print(f"\n[{app_name}] Date Processing:")
+                print("Before normalization:")
+                print(f"Column '{date_col}' - First 5 values:")
+                print(df[date_col].head().to_string())
+                print(f"Data type: {df[date_col].dtype}")
                 
-                # Convert dates without filling missing values
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                # Handle UTC timestamps (like in nammayathri)
+                if 'UTC' in str(df[date_col].iloc[0]):
+                    df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
+                else:
+                    # Convert dates without timezone info
+                    df[date_col] = pd.to_datetime(df[date_col], format='mixed')
                 
-                # Convert to string format, NaT values will become None/NaN
-                df[date_col] = df[date_col].dt.strftime('%Y-%m-%d')
+                # Debug after datetime conversion
+                print("\nAfter datetime conversion:")
+                print(df[date_col].head().to_string())
+                
+                # Convert to string format (only date part)
+                df[date_col] = df[date_col].dt.date.astype(str)
+                
+                # Debug after final formatting
+                print("\nAfter final formatting:")
+                print(df[date_col].head().to_string())
+                print("----------------------------------------")
                 
                 self.settlement_files[app_name] = df
-                print(f"  Successfully processed dates for {app_name}")
                 
             except Exception as e:
                 print(f"\n[{app_name}] Error processing dates:")
                 print(f"  Error: {str(e)}")
                 print(f"  Date column type: {type(df[date_col])}")
-                print(f"  Date column head: {df[date_col].head().tolist()}")
+                print(f"  Raw date values: {df[date_col].head().tolist()}")
                 continue
 
     def _merge_settlement_data(self):
@@ -455,6 +469,8 @@ class Process:
         merged_data['settle_col'] = None
         merged_data['result'] = None
 
+        final_merged_data = pd.DataFrame()  # Create empty DataFrame to store results
+
         # Process each payment app
         for app_name, mapping in self.app_mapping.items():
             try:
@@ -462,7 +478,10 @@ class Process:
                 if settlement_df is None:
                     continue
 
-                # Get required columns from settlement file
+                # Get data for current app
+                app_data = merged_data[merged_data['ONDCapp'] == app_name].copy()
+
+                # Get required columns from settlement file and remove duplicates
                 settlement_data = settlement_df[[
                     mapping['id_col'], 
                     mapping['amount_col'], 
@@ -470,14 +489,25 @@ class Process:
                     mapping['date_col']
                 ]].copy()
 
+                # Remove duplicates from settlement data based on ID and amount
+                settlement_data = settlement_data.drop_duplicates(
+                    subset=[mapping['id_col'], mapping['amount_col'], mapping['settle_col']],
+                    keep='first'
+                )
+
                 # Clean Paytm IDs by removing trailing '...'
                 if app_name == 'paytm':
                     settlement_data[mapping['id_col']] = settlement_data[mapping['id_col']].astype(str).str.replace('...', '').str.strip()
 
-                # Get data for current app
-                app_data = merged_data[merged_data['ONDCapp'] == app_name].copy()
+                if app_name == 'nammayathri':
+                    # Set negative settlement values to 0
+                    settlement_data[mapping['settle_col']] = settlement_data[mapping['settle_col']].apply(lambda x: max(0, x))
 
-                # Perform outer join
+                # Format settlement date to match insertDT format (YYYY-MM-DD 00:00:00)
+                if mapping['date_col'] in settlement_data.columns:
+                    settlement_data[mapping['date_col']] = pd.to_datetime(settlement_data[mapping['date_col']]).dt.strftime('%Y-%m-%d 00:00:00')
+
+                # Perform outer join 
                 merged = pd.merge(
                     app_data,
                     settlement_data,
@@ -489,8 +519,9 @@ class Process:
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
 
-                # Add settlement date column
-                merged['insertDT'] = merged[mapping['date_col']] 
+                # Handle dates
+                merged['insertDT'] = merged['insertDT'].fillna(merged[mapping['date_col']])
+                merged.loc[merged['insertDT'].isna(), 'insertDT'] = merged[mapping['date_col']]
 
                 # Fill all ID-related columns based on the mapping
                 if mapping['match_col'] == 'TicketNUmber':
@@ -503,6 +534,17 @@ class Process:
                 # Set result based on conditions
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
+
+                # Remove duplicates based on relevant columns for this app
+                dedup_columns = ['ONDCapp']
+                if not merged['TicketNUmber'].isna().all():
+                    dedup_columns.append('TicketNUmber')
+                if not merged['order_id'].isna().all():
+                    dedup_columns.append('order_id')
+                if not merged['transaction_ref_no'].isna().all():
+                    dedup_columns.append('transaction_ref_no')
+                
+                merged = merged.drop_duplicates(subset=dedup_columns, keep='first')
 
                 # Shortage: settlement amounts are empty
                 shortage_mask = merged['settle_col'].isna() & merged['amount_col'].isna()
@@ -518,9 +560,9 @@ class Process:
                               ~merged['total_amount'].isna() & ~merged['QRCodePrice'].isna())
                 merged.loc[settled_mask, 'result'] = 'settled'
 
-                # Update main DataFrame
-                merged_data = pd.concat([
-                    merged_data[merged_data['ONDCapp'] != app_name],
+                # Add to final DataFrame
+                final_merged_data = pd.concat([
+                    final_merged_data,
                     merged[merged_data.columns]
                 ])
 
@@ -534,12 +576,36 @@ class Process:
                 print(f"\n[{app_name}] Error: {str(e)}")
                 continue
 
+        # Add unprocessed records from other apps
+        processed_apps = set(self.settlement_files.keys())
+        unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
+        final_merged_data = pd.concat([final_merged_data, unprocessed_data])
+
+        # Final deduplication based on all relevant columns
+        dedup_columns = ['ONDCapp', 'insertDT']
+        if not final_merged_data['TicketNUmber'].isna().all():
+            dedup_columns.append('TicketNUmber')
+        if not final_merged_data['order_id'].isna().all():
+            dedup_columns.append('order_id')
+        if not final_merged_data['transaction_ref_no'].isna().all():
+            dedup_columns.append('transaction_ref_no')
+
+        final_merged_data = final_merged_data.drop_duplicates(subset=dedup_columns, keep='first')
+
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
                   'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
                   'amount_col', 'settle_col', 'result']
         
-        return merged_data[columns]
+        # Add debug logging to check final date coverage
+        total_rows = len(final_merged_data)
+        missing_dates = final_merged_data['insertDT'].isna().sum()
+        print(f"\nDate Coverage Summary:")
+        print(f"Total rows: {total_rows}")
+        print(f"Rows with dates: {total_rows - missing_dates}")
+        print(f"Rows missing dates: {missing_dates}")
+
+        return final_merged_data[columns]
 
     def _summarize_transactions(self):
         grouped_data = self.merged_data.groupby(['ONDCapp', 'insertDT']).agg({
@@ -557,15 +623,17 @@ class Process:
         return grouped_data
 
     def _standardize_date(self, date_series):
+        """Standardize dates to YYYY-MM-DD format"""
         try:
-            # Convert to datetime, coercing errors to NaT (Not a Time)
-            date_series = pd.to_datetime(date_series, errors='coerce')
+            # Convert to datetime, handling multiple formats
+            if 'UTC' in str(date_series.iloc[0]):
+                date_series = pd.to_datetime(date_series).dt.tz_localize(None)
+            else:
+                date_series = pd.to_datetime(date_series, format='mixed')
             
-            # Use ffill() instead of deprecated fillna(method='ffill')
-            date_series = date_series.ffill()
+            # Convert to date only (removes time component)
+            return date_series.dt.date.astype(str)
             
-            # Format as YYYY-MM-DD string
-            return date_series.dt.strftime('%Y-%m-%d')
         except Exception as e:
             print(f"Error standardizing dates: {e}")
             return date_series
