@@ -490,10 +490,6 @@ class Process:
                     mapping['date_col']
                 ]].copy()
 
-                # Remove duplicates from settlement data based on ID and amount
-                subset_cols = [mapping['id_col'], mapping['amount_col'], mapping['settle_col']]
-                settlement_data['is_duplicate'] = settlement_data.duplicated(subset=subset_cols, keep='first')
-
                 # Clean Paytm IDs by removing trailing '...'
                 if app_name == 'paytm':
                     settlement_data[mapping['id_col']] = settlement_data[mapping['id_col']].astype(str).str.replace('...', '').str.strip()
@@ -506,6 +502,9 @@ class Process:
                 if mapping['date_col'] in settlement_data.columns:
                     settlement_data[mapping['date_col']] = pd.to_datetime(settlement_data[mapping['date_col']]).dt.strftime('%Y-%m-%d 00:00:00')
 
+                subset_cols = [mapping['id_col']]
+                settlement_data['is_duplicate'] = settlement_data.duplicated(subset=subset_cols, keep='first')
+                
                 # Perform outer join 
                 merged = pd.merge(
                     app_data,
@@ -514,6 +513,8 @@ class Process:
                     right_on=mapping['id_col'],
                     how='outer'
                 )
+
+        
 
                 merged['duplicate'] = merged['is_duplicate'].fillna(False)
 
@@ -536,16 +537,16 @@ class Process:
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
 
-                # Remove duplicates based on relevant columns for this app
-                dedup_columns = ['ONDCapp', 'insertDT']
-                if not merged['TicketNUmber'].isna().all():
-                    dedup_columns.append('TicketNUmber')
-                if not merged['order_id'].isna().all():
-                    dedup_columns.append('order_id')
-                if not merged['transaction_ref_no'].isna().all():
-                    dedup_columns.append('transaction_ref_no')
+                # # Remove duplicates based on relevant columns for this app
+                # dedup_columns = ['ONDCapp', 'insertDT']
+                # if not merged['TicketNUmber'].isna().all():
+                #     dedup_columns.append('TicketNUmber')
+                # if not merged['order_id'].isna().all():
+                #     dedup_columns.append('order_id')
+                # if not merged['transaction_ref_no'].isna().all():
+                #     dedup_columns.append('transaction_ref_no')
                 
-                merged = merged.drop_duplicates(subset=dedup_columns, keep='first')
+                # merged = merged.drop_duplicates(subset=dedup_columns, keep='first')
 
                 # Shortage: settlement amounts are empty
                 shortage_mask = merged['settle_col'].isna() & merged['amount_col'].isna()
@@ -583,15 +584,15 @@ class Process:
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
 
         # Final deduplication based on all relevant columns
-        dedup_columns = ['ONDCapp', 'insertDT']
-        if not final_merged_data['TicketNUmber'].isna().all():
-            dedup_columns.append('TicketNUmber')
-        if not final_merged_data['order_id'].isna().all():
-            dedup_columns.append('order_id')
-        if not final_merged_data['transaction_ref_no'].isna().all():
-            dedup_columns.append('transaction_ref_no')
+        # dedup_columns = ['ONDCapp', 'insertDT']
+        # if not final_merged_data['TicketNUmber'].isna().all():
+        #     dedup_columns.append('TicketNUmber')
+        # if not final_merged_data['order_id'].isna().all():
+        #     dedup_columns.append('order_id')
+        # if not final_merged_data['transaction_ref_no'].isna().all():
+        #     dedup_columns.append('transaction_ref_no')
 
-        final_merged_data = final_merged_data.drop_duplicates(subset=dedup_columns, keep='first')
+        # final_merged_data = final_merged_data.drop_duplicates(subset=dedup_columns, keep='first')
 
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
