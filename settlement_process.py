@@ -536,16 +536,6 @@ class Process:
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
 
-                # Remove duplicates based on relevant columns for this app
-                dedup_columns = ['ONDCapp', 'insertDT']
-                if not merged['TicketNUmber'].isna().all():
-                    dedup_columns.append('TicketNUmber')
-                if not merged['order_id'].isna().all():
-                    dedup_columns.append('order_id')
-                if not merged['transaction_ref_no'].isna().all():
-                    dedup_columns.append('transaction_ref_no')
-                
-                merged = merged.drop_duplicates(subset=dedup_columns, keep='first')
 
                 # Shortage: settlement amounts are empty
                 shortage_mask = merged['settle_col'].isna() & merged['amount_col'].isna()
@@ -581,17 +571,6 @@ class Process:
         processed_apps = set(self.settlement_files.keys())
         unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
-
-        # Final deduplication based on all relevant columns
-        dedup_columns = ['ONDCapp', 'insertDT']
-        if not final_merged_data['TicketNUmber'].isna().all():
-            dedup_columns.append('TicketNUmber')
-        if not final_merged_data['order_id'].isna().all():
-            dedup_columns.append('order_id')
-        if not final_merged_data['transaction_ref_no'].isna().all():
-            dedup_columns.append('transaction_ref_no')
-
-        final_merged_data = final_merged_data.drop_duplicates(subset=dedup_columns, keep='first')
 
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
@@ -638,4 +617,3 @@ class Process:
         except Exception as e:
             print(f"Error standardizing dates: {e}")
             return date_series
-
