@@ -15,3 +15,4 @@ logs/
 # Ignore environment files
 .env
 /myenv
+venv

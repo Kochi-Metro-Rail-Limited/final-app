@@ -468,6 +468,7 @@ class Process:
         merged_data['amount_col'] = None
         merged_data['settle_col'] = None
         merged_data['result'] = None
+        merged_data['duplicate'] = None
 
         final_merged_data = pd.DataFrame()  # Create empty DataFrame to store results
 
@@ -490,10 +491,8 @@ class Process:
                 ]].copy()
 
                 # Remove duplicates from settlement data based on ID and amount
-                settlement_data = settlement_data.drop_duplicates(
-                    subset=[mapping['id_col'], mapping['amount_col'], mapping['settle_col']],
-                    keep='first'
-                )
+                subset_cols = [mapping['id_col'], mapping['amount_col'], mapping['settle_col']]
+                settlement_data['is_duplicate'] = settlement_data.duplicated(subset=subset_cols, keep='first')
 
                 # Clean Paytm IDs by removing trailing '...'
                 if app_name == 'paytm':
@@ -516,6 +515,8 @@ class Process:
                     how='outer'
                 )
 
+                merged['duplicate'] = merged['is_duplicate'].fillna(False)
+
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
 
@@ -536,7 +537,7 @@ class Process:
                 merged['settle_col'] = merged[mapping['settle_col']]
 
                 # Remove duplicates based on relevant columns for this app
-                dedup_columns = ['ONDCapp']
+                dedup_columns = ['ONDCapp', 'insertDT']
                 if not merged['TicketNUmber'].isna().all():
                     dedup_columns.append('TicketNUmber')
                 if not merged['order_id'].isna().all():
@@ -594,8 +595,8 @@ class Process:
 
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
-                  'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
-                  'amount_col', 'settle_col', 'result']
+            'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
+            'amount_col', 'settle_col', 'result', 'duplicate']
         
         # Add debug logging to check final date coverage
         total_rows = len(final_merged_data)
