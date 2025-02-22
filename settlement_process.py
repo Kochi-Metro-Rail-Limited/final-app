@@ -639,4 +639,3 @@ class Process:
         except Exception as e:
             print(f"Error standardizing dates: {e}")
             return date_series
-
