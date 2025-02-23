@@ -518,6 +518,12 @@ class Process:
 
                 merged['duplicate'] = merged['is_duplicate'].fillna(False)
 
+                group_col = mapping['id_col']
+                sum_cols = [mapping['amount_col'], mapping['settle_col']]
+                agg_dict = {col: 'sum' if col in sum_cols else 'first' for col in merged.columns}
+                merged = merged.groupby(group_col, as_index=False).agg(agg_dict)
+                merged['duplicate'] = False
+
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
 
