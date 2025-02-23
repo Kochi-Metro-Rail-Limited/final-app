@@ -300,20 +300,23 @@ class SingleFileUploader(QWidget):
                     # Add Action column efficiently using numpy
                     process.sheet4['Action'] = ''
                     
-                    # Use boolean indexing instead of multiple filtered copies
-                    mask_settled = process.sheet4['result'] == 'settled'
-                    mask_excess = process.sheet4['result'] == 'excess'
-                    mask_shortage = process.sheet4['result'] == 'shortage'
-
+                   
                     # Write to Excel efficiently using a context manager
                     with pd.ExcelWriter(save_path, engine='openpyxl', mode='w') as writer:
                         # Write main sheet
                         process.sheet4.to_excel(writer, sheet_name="Merged Data", index=False)
+
+                        # Get unique apps and create separate sheets
+                        unique_apps = process.sheet4['ONDCapp'].unique()
+                        for app in unique_apps:
+                            # Filter data for current app
+                            app_data = process.sheet4[process.sheet4['ONDCapp'] == app].copy()
+                            
+                            # Write to sheet named after the app
+                            sheet_name = str(app)[:31]  # Excel has 31 char limit for sheet names
+                            app_data.to_excel(writer, sheet_name=sheet_name, index=False)
                         
                         # Write filtered sheets without creating separate DataFrames
-                        process.sheet4[mask_settled].to_excel(writer, sheet_name="Settled", index=False)
-                        process.sheet4[mask_excess].to_excel(writer, sheet_name="Excess", index=False)
-                        process.sheet4[mask_shortage].to_excel(writer, sheet_name="Shortage", index=False)
                 else:
                     pd.DataFrame().to_excel(save_path, sheet_name="No Data", index=False)
 
@@ -467,10 +470,9 @@ class Process:
         # Add empty settlement columns
         merged_data['amount_col'] = None
         merged_data['settle_col'] = None
-        merged_data['result'] = None
-        merged_data['duplicate'] = None
+        merged_data['unsettled'] = None  # Add new column
 
-        final_merged_data = pd.DataFrame()  # Create empty DataFrame to store results
+        final_merged_data = pd.DataFrame()  
 
         # Process each payment app
         for app_name, mapping in self.app_mapping.items():
@@ -482,13 +484,21 @@ class Process:
                 # Get data for current app
                 app_data = merged_data[merged_data['ONDCapp'] == app_name].copy()
 
-                # Get required columns from settlement file and remove duplicates
+                # Get required columns from settlement file
                 settlement_data = settlement_df[[
                     mapping['id_col'], 
                     mapping['amount_col'], 
                     mapping['settle_col'],
                     mapping['date_col']
                 ]].copy()
+
+                # Aggregate duplicate ID values by summing amount and settlement columns
+                agg_dict = {
+                    mapping['amount_col']: 'sum',
+                    mapping['settle_col']: 'sum',
+                    mapping['date_col']: 'first'  # Keep first date for duplicates
+                }
+                settlement_data = settlement_data.groupby(mapping['id_col']).agg(agg_dict).reset_index()
 
                 # Clean Paytm IDs by removing trailing '...'
                 if app_name == 'paytm':
@@ -502,9 +512,6 @@ class Process:
                 if mapping['date_col'] in settlement_data.columns:
                     settlement_data[mapping['date_col']] = pd.to_datetime(settlement_data[mapping['date_col']]).dt.strftime('%Y-%m-%d 00:00:00')
 
-                subset_cols = [mapping['id_col']]
-                settlement_data['is_duplicate'] = settlement_data.duplicated(subset=subset_cols, keep='first')
-                
                 # Perform outer join 
                 merged = pd.merge(
                     app_data,
@@ -513,16 +520,6 @@ class Process:
                     right_on=mapping['id_col'],
                     how='outer'
                 )
-
-        
-
-                merged['duplicate'] = merged['is_duplicate'].fillna(False)
-
-                group_col = mapping['id_col']
-                sum_cols = [mapping['amount_col'], mapping['settle_col']]
-                agg_dict = {col: 'sum' if col in sum_cols else 'first' for col in merged.columns}
-                merged = merged.groupby(group_col, as_index=False).agg(agg_dict)
-                merged['duplicate'] = False
 
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
@@ -539,46 +536,18 @@ class Process:
                 elif mapping['match_col'] == 'transaction_ref_no':
                     merged['transaction_ref_no'] = merged['transaction_ref_no'].fillna(merged[mapping['id_col']])
 
-                # Set result based on conditions
+                # Set settlement amounts
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
-
-                # # Remove duplicates based on relevant columns for this app
-                # dedup_columns = ['ONDCapp', 'insertDT']
-                # if not merged['TicketNUmber'].isna().all():
-                #     dedup_columns.append('TicketNUmber')
-                # if not merged['order_id'].isna().all():
-                #     dedup_columns.append('order_id')
-                # if not merged['transaction_ref_no'].isna().all():
-                #     dedup_columns.append('transaction_ref_no')
                 
-                # merged = merged.drop_duplicates(subset=dedup_columns, keep='first')
-
-                # Shortage: settlement amounts are empty
-                shortage_mask = merged['settle_col'].isna() & merged['amount_col'].isna()
-                merged.loc[shortage_mask, 'result'] = 'shortage'
-
-                # Excess: settlement amounts exist but original amounts don't
-                excess_mask = (~merged['settle_col'].isna() & ~merged['amount_col'].isna() & 
-                              merged['total_amount'].isna() & merged['QRCodePrice'].isna())
-                merged.loc[excess_mask, 'result'] = 'excess'
-
-                # Settled: all amounts exist
-                settled_mask = (~merged['settle_col'].isna() & ~merged['amount_col'].isna() & 
-                              ~merged['total_amount'].isna() & ~merged['QRCodePrice'].isna())
-                merged.loc[settled_mask, 'result'] = 'settled'
+                # Calculate unsettled amount
+                merged['unsettled'] = merged['QRCodePrice'] - merged['amount_col']
 
                 # Add to final DataFrame
                 final_merged_data = pd.concat([
                     final_merged_data,
                     merged[merged_data.columns]
                 ])
-
-                # Print summary
-                print(f"\n[{app_name}] Processing Summary:")
-                print(f"  Settled: {(merged['result'] == 'settled').sum()}")
-                print(f"  Shortage: {(merged['result'] == 'shortage').sum()}")
-                print(f"  Excess: {(merged['result'] == 'excess').sum()}")
 
             except Exception as e:
                 print(f"\n[{app_name}] Error: {str(e)}")
@@ -589,21 +558,10 @@ class Process:
         unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
 
-        # Final deduplication based on all relevant columns
-        # dedup_columns = ['ONDCapp', 'insertDT']
-        # if not final_merged_data['TicketNUmber'].isna().all():
-        #     dedup_columns.append('TicketNUmber')
-        # if not final_merged_data['order_id'].isna().all():
-        #     dedup_columns.append('order_id')
-        # if not final_merged_data['transaction_ref_no'].isna().all():
-        #     dedup_columns.append('transaction_ref_no')
-
-        # final_merged_data = final_merged_data.drop_duplicates(subset=dedup_columns, keep='first')
-
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
             'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
-            'amount_col', 'settle_col', 'result', 'duplicate']
+            'amount_col', 'settle_col', 'unsettled']
         
         # Add debug logging to check final date coverage
         total_rows = len(final_merged_data)
