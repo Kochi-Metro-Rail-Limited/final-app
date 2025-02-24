@@ -169,6 +169,10 @@ class ExcelUploader(QWidget):
 
     def load_table(self, table_view, file_path):
         try:
+            # Start loading overlay
+            self.loading_overlay.start_loading("Loading file...")
+            
+            # Read Excel file
             df = pd.read_excel(file_path)
             model = QStandardItemModel()
 
@@ -184,8 +188,10 @@ class ExcelUploader(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading file:\n{str(e)}")
+        finally:
+            # Stop loading overlay
+            self.loading_overlay.stop_loading()
 
-  
     def submit(self):
         """Process the uploaded files"""
         try:

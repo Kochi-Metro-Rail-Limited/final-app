@@ -80,9 +80,15 @@ class BankStatementProcessor(QWidget):
             self, "Select Bank Statement", "", "Excel Files (*.xlsx)"
         )
         if self.bank_statement_path:
+            # Show loading overlay before starting the upload
+            self.loading_overlay.start_loading("Uploading bank statement...")
+            
+            # Update the label text
             self.bank_statement_label.setText(
                 f"Selected: {os.path.basename(self.bank_statement_path)}"
             )
+            
+            # Load the table with the file
             self.load_table(self.bank_statement_path)
 
     def load_table(self, file_path):

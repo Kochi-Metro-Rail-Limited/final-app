@@ -1,4 +1,3 @@
-import traceback
 import pandas as pd
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, 
@@ -185,38 +184,18 @@ class SingleFileUploader(QWidget):
             QMessageBox.warning(self, "Error", "No settlement files uploaded.")
             return
 
-        # Disable buttons
         self.summary_button.setEnabled(False)
         self.merged_doc_button.setEnabled(False)
         
-        # Show loading overlay
         self.loading_overlay.start_loading("Processing files...")
 
         try:
-            # Load the main file
             df = pd.read_excel(self.file_path)
             self.loading_overlay.set_progress(20)
-
-            # First try AppData directory
-            # appdata_dir = os.getenv("APPDATA") if os.name == "nt" else os.path.expanduser("~/.config")
-            # app_folder = os.path.join(appdata_dir, "kochimetro")
-            # do_not_delete_path = os.path.join(app_folder, "DO_NOT_DELETE.csv")
-
-            # # If AppData path doesn't exist, use local project directory
-            # if not os.path.exists(do_not_delete_path):
-            #     do_not_delete_path = os.path.join(os.path.dirname(__file__), "DO_NOT_DELETE.csv")
-
-            # if not os.path.exists(do_not_delete_path):
-            #     self.loading_overlay.stop_loading()
-            #     QMessageBox.critical(self, "Error", "Please upload AFC and Triffy files again.")
-            #     return
-
-            # original_df = pd.read_csv(do_not_delete_path)
 
             original_df = df
             self.loading_overlay.set_progress(40)
 
-            # Create an instance of Process with the original DataFrame
             process = Process(original_df, self.settlement_files)
             self.loading_overlay.set_progress(70)
 
@@ -255,38 +234,18 @@ class SingleFileUploader(QWidget):
             QMessageBox.warning(self, "Error", "No settlement files uploaded.")
             return
 
-        # Disable buttons
         self.summary_button.setEnabled(False)
         self.merged_doc_button.setEnabled(False)
         
-        # Show loading overlay
         self.loading_overlay.start_loading("Processing files...")
 
         try:
-            # Load the main file
             df = pd.read_excel(self.file_path)
             self.loading_overlay.set_progress(20)
-
-            # First try AppData directory
-            # appdata_dir = os.getenv("APPDATA") if os.name == "nt" else os.path.expanduser("~/.config")
-            # app_folder = os.path.join(appdata_dir, "kochimetro")
-            # do_not_delete_path = os.path.join(app_folder, "DO_NOT_DELETE.csv")
-
-            # # If AppData path doesn't exist, use local project directory
-            # if not os.path.exists(do_not_delete_path):
-            #     do_not_delete_path = os.path.join(os.path.dirname(__file__), "DO_NOT_DELETE.csv")
-
-            # if not os.path.exists(do_not_delete_path):
-            #     self.loading_overlay.stop_loading()
-            #     QMessageBox.critical(self, "Error", "Please upload AFC and Triffy files again.")
-            #     return
-
-            # original_df = pd.read_csv(do_not_delete_path)
 
             original_df = df
             self.loading_overlay.set_progress(40)
 
-            # Create an instance of Process with the original DataFrame
             process = Process(original_df, self.settlement_files)
             self.loading_overlay.set_progress(70)
 
