@@ -422,8 +422,8 @@ class Process:
                                       'QRCodePrice', 'booking_status', 'descCode', 'Remark']].copy()
         
         # Add empty settlement columns
-        merged_data['settlement_amount'] = None
-        merged_data['settlement_total'] = None
+        merged_data['amount_col'] = None
+        merged_data['settle_col'] = None
         merged_data['unsettled'] = None
 
         final_merged_data = pd.DataFrame()  
