@@ -265,15 +265,13 @@ class SingleFileUploader(QWidget):
                         # Write main sheet
                         process.sheet4.to_excel(writer, sheet_name="Merged Data", index=False)
 
-                        # Get unique apps and create separate sheets
-                        unique_apps = process.sheet4['ONDCapp'].unique()
-                        for app in unique_apps:
-                            # Filter data for current app
-                            app_data = process.sheet4[process.sheet4['ONDCapp'] == app].copy()
-                            
-                            # Write to sheet named after the app
-                            sheet_name = str(app)[:31]  # Excel has 31 char limit for sheet names
-                            app_data.to_excel(writer, sheet_name=sheet_name, index=False)
+                        # Find duplicates based on ticket numbers and include all occurrences
+                        duplicate_mask = process.sheet4['TicketNUmber'].duplicated(keep=False)
+                        duplicates = process.sheet4[duplicate_mask].sort_values('TicketNUmber')
+                        # Filter out rows with empty or missing ticket numbers
+                        duplicates = duplicates[duplicates['TicketNUmber'].notna() & (duplicates['TicketNUmber'] != 'MISSING')]
+                        if not duplicates.empty:
+                            duplicates.to_excel(writer, sheet_name="Duplicate Tickets", index=False)
                         
                         # Write filtered sheets without creating separate DataFrames
                 else:
@@ -418,22 +416,18 @@ class Process:
                 continue
 
     def _merge_settlement_data(self):
-        """
-        Core reconciliation logic using outer join to identify matched, excess, and shortage records
-        """
         # Create base DataFrame with required columns
         merged_data = self.original_df[['insertDT', 'TicketNUmber', 'order_id', 
                                       'transaction_ref_no', 'ONDCapp', 'total_amount', 
                                       'QRCodePrice', 'booking_status', 'descCode', 'Remark']].copy()
         
         # Add empty settlement columns
-        merged_data['amount_col'] = None
-        merged_data['settle_col'] = None
-        merged_data['unsettled'] = None  # Add new column
+        merged_data['settlement_amount'] = None
+        merged_data['settlement_total'] = None
+        merged_data['unsettled'] = None
 
         final_merged_data = pd.DataFrame()  
 
-        # Process each payment app
         for app_name, mapping in self.app_mapping.items():
             try:
                 settlement_df = self.settlement_files.get(app_name)
@@ -500,7 +494,7 @@ class Process:
                 merged['settle_col'] = merged[mapping['settle_col']]
                 
                 # Calculate unsettled amount
-                merged['unsettled'] = merged['QRCodePrice'] - merged['amount_col']
+                merged['unsettled'] = merged['QRCodePrice'] - merged['settle_col']
 
                 # Add to final DataFrame
                 final_merged_data = pd.concat([

@@ -271,8 +271,39 @@ class ExcelUploader(QWidget):
 
             # Read and clean Triffy data
             triffy_df = pd.read_excel(self.file2_path)
+            print("\nTriffy Data Quality before cleaning:")
+            print(f"Total rows: {len(triffy_df)}")
+            print(f"Unique ticket numbers: {triffy_df['ticket_number'].nunique()}")
+            print(f"Original Triffy sum: {triffy_df['total_amount'].sum()}")
+            print(f"Duplicate ticket numbers: {triffy_df['ticket_number'].duplicated().sum()}")
+
+            # Clean Triffy data
             triffy_df['ticket_number'] = triffy_df['ticket_number'].astype(str).str.strip()
             triffy_df['total_amount'] = pd.to_numeric(triffy_df['total_amount'], errors='coerce')
+            
+            # Remove rows with null values
+            triffy_df = triffy_df.dropna(subset=['ticket_number', 'total_amount'])
+            
+            print("\nTriffy Data Quality after cleaning:")
+            print(f"Total rows: {len(triffy_df)}")
+            print(f"Unique ticket numbers: {triffy_df['ticket_number'].nunique()}")
+            print(f"Triffy sum after cleaning: {triffy_df['total_amount'].sum()}")
+
+            # Aggregate Triffy data
+            triffy_df = triffy_df.groupby('ticket_number', as_index=False).agg({
+                'total_amount': 'sum',
+                'transaction_ref_no': 'first',
+                'order_id': 'first',
+                'booking_status': 'first',
+                'source': 'first',
+                'destination': 'first',
+                'booking_date': 'first'
+            })
+
+            print("\nTriffy Data after aggregation:")
+            print(f"Total unique tickets: {len(triffy_df)}")
+            print(f"Triffy sum after aggregation: {triffy_df['total_amount'].sum():.2f}")
+
             self.loading_overlay.set_progress(60)
 
             # Aggregate AFC data with proper groupby
@@ -299,13 +330,13 @@ class ExcelUploader(QWidget):
                 'booking_date': 'first'
             })
 
-            rows_with_nan = triffy_df.isnull().any(axis=1).sum()
-            logging.info(triffy_df.shape)
-            logging.info(rows_with_nan)
-            triffy_df = triffy_df.dropna()
-            logging.info(triffy_df.shape)
-            rows_with_nan = triffy_df.isnull().any(axis=1).sum()
-            logging.info(rows_with_nan)
+            # rows_with_nan = triffy_df.isnull().any(axis=1).sum()
+            # logging.info(triffy_df.shape)
+            # logging.info(rows_with_nan)
+            # triffy_df = triffy_df.dropna()
+            # logging.info(triffy_df.shape)
+            # rows_with_nan = triffy_df.isnull().any(axis=1).sum()
+            # logging.info(rows_with_nan)
 
             # Merge with validation
             pre_merge_afc_sum = afc_df['QRCodePrice'].sum()
@@ -321,6 +352,11 @@ class ExcelUploader(QWidget):
             
             print(f"AFC sum before merge: {pre_merge_afc_sum}")
             print(f"AFC sum after merge: {post_merge_afc_sum}")
+
+            # After merge, print both sums
+            print(f"\nFinal Sums Comparison:")
+            print(f"AFC total: {merged_df['QRCodePrice'].sum():.2f}")
+            print(f"Triffy total: {merged_df['total_amount'].sum():.2f}")
 
             # Convert dates
             merged_df['insertDT'] = pd.to_datetime(merged_df['insertDT']).dt.date
