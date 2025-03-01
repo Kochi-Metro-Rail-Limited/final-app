@@ -426,6 +426,10 @@ class Process:
         merged_data['settle_col'] = None
         merged_data['unsettled'] = None
 
+        # Store original row count
+        original_count = len(merged_data)
+        print(f"Original row count: {original_count}")
+
         final_merged_data = pd.DataFrame()  
 
         for app_name, mapping in self.app_mapping.items():
@@ -445,33 +449,28 @@ class Process:
                     mapping['date_col']
                 ]].copy()
 
-                # Aggregate duplicate ID values by summing amount and settlement columns
-                agg_dict = {
-                    mapping['amount_col']: 'sum',
-                    mapping['settle_col']: 'sum',
-                    mapping['date_col']: 'first'  # Keep first date for duplicates
-                }
-                settlement_data = settlement_data.groupby(mapping['id_col']).agg(agg_dict).reset_index()
-
+                # Handle duplicate id_col entries by aggregating amount and settlement columns
+                if settlement_data[mapping['id_col']].duplicated().any():
+                    settlement_data = settlement_data.groupby(mapping['id_col']).agg({
+                        mapping['amount_col']: 'sum',
+                        mapping['settle_col']: 'sum',
+                        mapping['date_col']: 'first'  # Keep first date for duplicates
+                    }).reset_index()
+                # For Namma Yatri, set negative settlement values to 0
+                if app_name == 'nammayathri':
+                    settlement_data[mapping['settle_col']] = settlement_data[mapping['settle_col']].clip(lower=0)
                 # Clean Paytm IDs by removing trailing '...'
                 if app_name == 'paytm':
                     settlement_data[mapping['id_col']] = settlement_data[mapping['id_col']].astype(str).str.replace('...', '').str.strip()
 
-                if app_name == 'nammayathri':
-                    # Set negative settlement values to 0
-                    settlement_data[mapping['settle_col']] = settlement_data[mapping['settle_col']].apply(lambda x: max(0, x))
-
-                # Format settlement date to match insertDT format (YYYY-MM-DD 00:00:00)
-                if mapping['date_col'] in settlement_data.columns:
-                    settlement_data[mapping['date_col']] = pd.to_datetime(settlement_data[mapping['date_col']]).dt.strftime('%Y-%m-%d 00:00:00')
-
-                # Perform outer join 
+               
+                # Keep outer merge to get both unmatched original rows AND unmatched settlement rows
                 merged = pd.merge(
                     app_data,
                     settlement_data,
                     left_on=mapping['match_col'],
                     right_on=mapping['id_col'],
-                    how='outer'
+                    how='outer'  # This is correct - we want both unmatched original and settlement rows
                 )
 
                 # Fill ONDCapp for settlement-only records
@@ -479,7 +478,6 @@ class Process:
 
                 # Handle dates
                 merged['insertDT'] = merged['insertDT'].fillna(merged[mapping['date_col']])
-                merged.loc[merged['insertDT'].isna(), 'insertDT'] = merged[mapping['date_col']]
 
                 # Fill all ID-related columns based on the mapping
                 if mapping['match_col'] == 'TicketNUmber':
@@ -493,8 +491,8 @@ class Process:
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
                 
-                # Calculate unsettled amount
-                merged['unsettled'] = merged['QRCodePrice'] - merged['settle_col']
+                # Calculate unsettled amount (handle NaN values)
+                merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['settle_col'].fillna(0)
 
                 # Add to final DataFrame
                 final_merged_data = pd.concat([
@@ -511,19 +509,19 @@ class Process:
         unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
 
+        # Print summary of data
+        final_count = len(final_merged_data)
+        settlement_only = final_count - original_count
+        print(f"\nData Summary:")
+        print(f"Original rows: {original_count}")
+        print(f"Final rows: {final_count}")
+        print(f"Settlement-only rows: {settlement_only}")
+
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
             'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
             'amount_col', 'settle_col', 'unsettled']
         
-        # Add debug logging to check final date coverage
-        total_rows = len(final_merged_data)
-        missing_dates = final_merged_data['insertDT'].isna().sum()
-        print(f"\nDate Coverage Summary:")
-        print(f"Total rows: {total_rows}")
-        print(f"Rows with dates: {total_rows - missing_dates}")
-        print(f"Rows missing dates: {missing_dates}")
-
         return final_merged_data[columns]
 
     def _summarize_transactions(self):
