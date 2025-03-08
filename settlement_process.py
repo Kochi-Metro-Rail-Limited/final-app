@@ -272,6 +272,13 @@ class SingleFileUploader(QWidget):
                         duplicates = duplicates[duplicates['TicketNUmber'].notna() & (duplicates['TicketNUmber'] != 'MISSING')]
                         if not duplicates.empty:
                             duplicates.to_excel(writer, sheet_name="Duplicate Tickets", index=False)
+
+                        # Create separate sheets for each ONDCapp
+                        for app in process.sheet4['ONDCapp'].unique():
+                            if pd.notna(app):  # Skip if app name is NaN
+                                app_data = process.sheet4[process.sheet4['ONDCapp'] == app]
+                                if not app_data.empty:
+                                    app_data.to_excel(writer, sheet_name=f"{app} Data", index=False)
                         
                         # Write filtered sheets without creating separate DataFrames
                 else:
@@ -356,12 +363,12 @@ class Process:
         else:
             # Default configuration
             default_config = {
-                'easemytrip': {'id_col': 'TicketId', 'match_col': 'TicketNUmber', 'amount_col': 'TOTALAMOUNT', 'settle_col': 'SettlementAmount', 'date_col': 'Date'},
-                'nammayathri': {'id_col': 'Ticket Id', 'match_col': 'TicketNUmber', 'amount_col': 'Total Amount', 'settle_col': 'Settlement Amount', 'date_col': 'Date'},
-                'phonepe': {'id_col': 'Ticket Id', 'match_col': 'TicketNUmber', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date'},
-                'paytm': {'id_col': 'Operator Reference Number', 'match_col': 'order_id', 'amount_col': 'Total Price', 'settle_col': 'Payable Amount', 'date_col': 'Settlement Date'},
-                'rapido': {'id_col': 'Network Order ID', 'match_col': 'transaction_ref_no', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date'},
-                'redbus': {'id_col': 'Network Order ID(From ondcTxnId)', 'match_col': 'transaction_ref_no', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date'}
+                'easemytrip': {'id_col': 'TicketId', 'match_col': 'TicketNUmber', 'amount_col': 'TOTALAMOUNT', 'settle_col': 'SettlementAmount', 'date_col': 'Date', 'comment_col': 'TicketStatus'},
+                'nammayathri': {'id_col': 'Ticket Id', 'match_col': 'TicketNUmber', 'amount_col': 'Total Amount', 'settle_col': 'Settlement Amount', 'date_col': 'Date', 'comment_col': 'Ticket Status'},
+                'phonepe': {'id_col': 'Ticket Id', 'match_col': 'TicketNUmber', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date', 'comment_col': 'Ticket Status'},
+                'paytm': {'id_col': 'Operator Reference Number', 'match_col': 'order_id', 'amount_col': 'Total Price', 'settle_col': 'Payable Amount', 'date_col': 'Settlement Date', 'comment_col': 'Payment Status'},
+                'rapido': {'id_col': 'Network Order ID', 'match_col': 'transaction_ref_no', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date', 'comment_col': 'Ticket Status'},
+                'redbus': {'id_col': 'Network Order ID(From ondcTxnId)', 'match_col': 'transaction_ref_no', 'amount_col': 'TOTAL AMOUNT', 'settle_col': 'Settlement Amount', 'date_col': 'Date', 'comment_col': 'Ticket Status'}
             }
 
             # Save the default configuration to the file
@@ -424,6 +431,7 @@ class Process:
         # Add empty settlement columns
         merged_data['amount_col'] = None
         merged_data['settle_col'] = None
+        merged_data['comment_col'] = None
         merged_data['unsettled'] = None
 
         # Store original row count
@@ -442,20 +450,30 @@ class Process:
                 app_data = merged_data[merged_data['ONDCapp'] == app_name].copy()
 
                 # Get required columns from settlement file
-                settlement_data = settlement_df[[
+                required_cols = [
                     mapping['id_col'], 
                     mapping['amount_col'], 
                     mapping['settle_col'],
                     mapping['date_col']
-                ]].copy()
+                ]
+                
+                # Only add comment_col if it exists in the mapping
+                if 'comment_col' in mapping:
+                    required_cols.append(mapping['comment_col'])
+                
+                settlement_data = settlement_df[required_cols].copy()
 
                 # Handle duplicate id_col entries by aggregating amount and settlement columns
                 if settlement_data[mapping['id_col']].duplicated().any():
-                    settlement_data = settlement_data.groupby(mapping['id_col']).agg({
+                    agg_dict = {
                         mapping['amount_col']: 'sum',
                         mapping['settle_col']: 'sum',
-                        mapping['date_col']: 'first'  # Keep first date for duplicates
-                    }).reset_index()
+                        mapping['date_col']: 'first'
+                    }
+                    if 'comment_col' in mapping:
+                        agg_dict[mapping['comment_col']] = 'first'
+                    
+                    settlement_data = settlement_data.groupby(mapping['id_col']).agg(agg_dict).reset_index()
                 # For Namma Yatri, set negative settlement values to 0
                 if app_name == 'nammayathri':
                     settlement_data[mapping['settle_col']] = settlement_data[mapping['settle_col']].clip(lower=0)
@@ -491,8 +509,14 @@ class Process:
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
                 
+                # Handle comment column if it exists in mapping
+                if 'comment_col' in mapping:
+                    merged['comment_col'] = merged[mapping['comment_col']]
+                else:
+                    merged['comment_col'] = None
+                
                 # Calculate unsettled amount (handle NaN values)
-                merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['settle_col'].fillna(0)
+                merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['amount_col'].fillna(0)
 
                 # Add to final DataFrame
                 final_merged_data = pd.concat([
@@ -509,6 +533,26 @@ class Process:
         unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
 
+        # Add result column based on conditions
+        conditions = [
+            # Settled: All amounts present
+            (final_merged_data['total_amount'].notna() & 
+             final_merged_data['QRCodePrice'].notna() & 
+             final_merged_data['settle_col'].notna() & 
+             final_merged_data['amount_col'].notna()),
+            
+            # Shortage: Settlement amounts missing
+            (final_merged_data['settle_col'].isna() & 
+             final_merged_data['amount_col'].isna()),
+            
+            # Excess: Original amounts missing 
+            (final_merged_data['total_amount'].isna() & 
+             final_merged_data['QRCodePrice'].isna())
+        ]
+
+        choices = ['Settled', 'Shortage', 'Excess']
+        final_merged_data['result'] = np.select(conditions, choices, default='Unknown')
+
         # Print summary of data
         final_count = len(final_merged_data)
         settlement_only = final_count - original_count
@@ -520,7 +564,7 @@ class Process:
         # Ensure consistent column order
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
             'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
-            'amount_col', 'settle_col', 'unsettled']
+            'amount_col', 'settle_col', 'unsettled', 'comment_col']
         
         return final_merged_data[columns]
 
@@ -529,13 +573,15 @@ class Process:
             'QRCodePrice': 'sum',
             'total_amount': 'sum',
             'amount_col': 'sum',
-            'settle_col': 'sum'
+            'settle_col': 'sum',
+            'comment_col': 'first'
         }).reset_index()
         grouped_data.rename(columns={
             'QRCodePrice': 'original_amount(afc)',
             'total_amount': 'original_amount(triffi)',
             'amount_col': 'total_amount',
-            'settle_col': 'settlement_amount'
+            'settle_col': 'settlement_amount',
+            'comment_col': 'comment'
         }, inplace=True)
         return grouped_data
 
