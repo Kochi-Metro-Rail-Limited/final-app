@@ -348,6 +348,7 @@ class ExcelUploader(QWidget):
                 how='outer',
                 indicator=True
             )
+            merged_df["TicketNUmber"] = merged_df['TicketNUmber'].fillna(merged_df['ticket_number'])
             post_merge_afc_sum = merged_df['QRCodePrice'].sum()
             
             print(f"AFC sum before merge: {pre_merge_afc_sum}")
