@@ -19,6 +19,7 @@ class SettingsTab(QWidget):
         self.amount_col_dropdown = QComboBox()
         self.settle_col_dropdown = QComboBox()
         self.date_col_dropdown = QComboBox()
+        self.comment_col_dropdown = QComboBox()
 
         self.init_ui()
         
@@ -94,7 +95,8 @@ class SettingsTab(QWidget):
             ("Match Column(in AFC-Triffi)", self.match_col_dropdown),
             ("Amount Column", self.amount_col_dropdown),
             ("Settle Column", self.settle_col_dropdown),
-            ("Date Column", self.date_col_dropdown)
+            ("Date Column", self.date_col_dropdown),
+            ("Comment/Status Column", self.comment_col_dropdown)
         ]
 
         for label_text, dropdown in dropdowns:
@@ -183,7 +185,7 @@ class SettingsTab(QWidget):
                 # Populate dropdowns with column names
                 for dropdown in [self.id_col_dropdown,
                                  self.amount_col_dropdown, self.settle_col_dropdown,
-                                 self.date_col_dropdown]:
+                                 self.date_col_dropdown, self.comment_col_dropdown]:
                     dropdown.clear()
                     dropdown.addItems(self.columns)
                 
@@ -219,6 +221,7 @@ class SettingsTab(QWidget):
                 'amount_col': self.amount_col_dropdown.currentText(),
                 'settle_col': self.settle_col_dropdown.currentText(),
                 'date_col': self.date_col_dropdown.currentText(),
+                'comment_col': self.comment_col_dropdown.currentText(),
             }
 
             self.loading_overlay.set_progress(50)

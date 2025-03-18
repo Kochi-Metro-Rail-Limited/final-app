@@ -259,7 +259,9 @@ class SingleFileUploader(QWidget):
                     # Add Action column efficiently using numpy
                     process.sheet4['Action'] = ''
                     
-                   
+                    # Ensure comment_col is preserved
+                    process.sheet4['comment_col'] = process.sheet4['comment_col'].fillna('No comment')
+                    
                     # Write to Excel efficiently using a context manager
                     with pd.ExcelWriter(save_path, engine='openpyxl', mode='w') as writer:
                         # Write main sheet
@@ -440,14 +442,32 @@ class Process:
 
         final_merged_data = pd.DataFrame()  
 
+        # QUICK FIX: Force add comment column mappings to ensure they're used
+        comment_cols = {
+            'easemytrip': 'TicketStatus',
+            'nammayathri': 'Ticket Status',
+            'phonepe': 'Ticket Status',
+            'paytm': 'Payment Status',
+            'rapido': 'Ticket Status',
+            'redbus': 'Ticket Status'
+        }
+
         for app_name, mapping in self.app_mapping.items():
             try:
+                # QUICK FIX: Add comment_col to mapping if not already there
+                if 'comment_col' not in mapping and app_name in comment_cols:
+                    mapping['comment_col'] = comment_cols[app_name]
+                    print(f"Added comment_col '{mapping['comment_col']}' to {app_name} mapping")
+
                 settlement_df = self.settlement_files.get(app_name)
                 if settlement_df is None:
                     continue
 
+                print(f"\n\n==== BEGIN PROCESSING {app_name.upper()} ====")
+                
                 # Get data for current app
                 app_data = merged_data[merged_data['ONDCapp'] == app_name].copy()
+                print(f"App data rows: {len(app_data)}")
 
                 # Get required columns from settlement file
                 required_cols = [
@@ -458,13 +478,45 @@ class Process:
                 ]
                 
                 # Only add comment_col if it exists in the mapping
+                comment_col_name = None
                 if 'comment_col' in mapping:
                     required_cols.append(mapping['comment_col'])
+                    comment_col_name = mapping['comment_col']
+                    print(f"Comment column from config: '{comment_col_name}'")
+                else:
+                    print("No comment column in config for this app")
                 
-                settlement_data = settlement_df[required_cols].copy()
+                # Debug settlement file columns to verify comment column exists
+                print(f"Available columns in {app_name} settlement file: {settlement_df.columns.tolist()}")
+                if comment_col_name:
+                    if comment_col_name in settlement_df.columns:
+                        print(f"FOUND: Comment column '{comment_col_name}' exists in settlement file")
+                        print(f"  Sample values: {settlement_df[comment_col_name].head(3).tolist()}")
+                        print(f"  Data type: {settlement_df[comment_col_name].dtype}")
+                        print(f"  Contains NaN: {settlement_df[comment_col_name].isna().any()}")
+                        
+                        # Check for empty strings or whitespace
+                        is_empty = (settlement_df[comment_col_name].astype(str).str.strip() == '')
+                        print(f"  Contains empty strings: {is_empty.any()}")
+                    else:
+                        print(f"ERROR: Comment column '{comment_col_name}' NOT FOUND in settlement file")
+                
+                # Filter to only include columns that exist in the settlement_df
+                valid_cols = [col for col in required_cols if col in settlement_df.columns]
+                settlement_data = settlement_df[valid_cols].copy()
+                print(f"Valid columns after filtering: {valid_cols}")
+
+                # Create pre-merge dictionary for direct mapping approach
+                comment_dict = {}
+                if comment_col_name and comment_col_name in settlement_data.columns:
+                    comment_dict = dict(zip(settlement_data[mapping['id_col']], 
+                                          settlement_data[comment_col_name]))
+                    print(f"Created comment dictionary with {len(comment_dict)} entries")
+                    print(f"Sample dictionary entries: {list(comment_dict.items())[:3]}")
 
                 # Handle duplicate id_col entries by aggregating amount and settlement columns
                 if settlement_data[mapping['id_col']].duplicated().any():
+                    print(f"Found duplicate IDs in settlement data - aggregating")
                     agg_dict = {
                         mapping['amount_col']: 'sum',
                         mapping['settle_col']: 'sum',
@@ -474,23 +526,28 @@ class Process:
                         agg_dict[mapping['comment_col']] = 'first'
                     
                     settlement_data = settlement_data.groupby(mapping['id_col']).agg(agg_dict).reset_index()
-                # For Namma Yatri, set negative settlement values to 0
+                
                 if app_name == 'nammayathri':
                     settlement_data[mapping['settle_col']] = settlement_data[mapping['settle_col']].clip(lower=0)
-                # Clean Paytm IDs by removing trailing '...'
+                
                 if app_name == 'paytm':
                     settlement_data[mapping['id_col']] = settlement_data[mapping['id_col']].astype(str).str.replace('...', '').str.strip()
 
-               
+                print(f"Ready for merge: app_data={len(app_data)} rows, settlement_data={len(settlement_data)} rows")
+                
                 # Keep outer merge to get both unmatched original rows AND unmatched settlement rows
                 merged = pd.merge(
                     app_data,
                     settlement_data,
                     left_on=mapping['match_col'],
                     right_on=mapping['id_col'],
-                    how='outer'  # This is correct - we want both unmatched original and settlement rows
+                    how='outer',
+                    suffixes=('', '_settlement')  # Important: Avoid column name conflicts
                 )
-
+                
+                print(f"After merge: {len(merged)} rows")
+                print(f"All columns after merge: {merged.columns.tolist()}")
+                
                 # Fill ONDCapp for settlement-only records
                 merged['ONDCapp'] = merged['ONDCapp'].fillna(app_name)
 
@@ -509,29 +566,103 @@ class Process:
                 merged['amount_col'] = merged[mapping['amount_col']]
                 merged['settle_col'] = merged[mapping['settle_col']]
                 
-                # Handle comment column if it exists in mapping
-                if 'comment_col' in mapping:
-                    merged['comment_col'] = merged[mapping['comment_col']]
+                # ATTEMPT 1: Direct approach using suffix pattern
+                print("\n--- COMMENT COLUMN DEBUGGING ---")
+                
+                if comment_col_name:
+                    comment_col_with_suffix = f"{comment_col_name}_settlement"
+                    has_original = comment_col_name in merged.columns
+                    has_with_suffix = comment_col_with_suffix in merged.columns
+                    
+                    print(f"Original column name: '{comment_col_name}' exists: {has_original}")
+                    print(f"With suffix: '{comment_col_with_suffix}' exists: {has_with_suffix}")
+                    
+                    # Try three different approaches and print results:
+                    
+                    # 1. Try with column suffix
+                    if has_with_suffix:
+                        print("\nApproach 1: Using column with suffix")
+                        merged['debug_comment1'] = merged[comment_col_with_suffix]
+                        print(f"Sample values: {merged['debug_comment1'].head(3).tolist()}")
+                    
+                    # 2. Try with original column name
+                    if has_original:
+                        print("\nApproach 2: Using original column name")
+                        merged['debug_comment2'] = merged[comment_col_name]
+                        print(f"Sample values: {merged['debug_comment2'].head(3).tolist()}")
+                    
+                    # 3. Try with dictionary mapping
+                    print("\nApproach 3: Using dictionary mapping")
+                    merged['debug_comment3'] = merged[mapping['id_col']].map(comment_dict)
+                    print(f"Sample values: {merged['debug_comment3'].head(3).tolist()}")
+                    
+                    # See which approach works best
+                    print("\nFinal decision for comment column:")
+                    if has_with_suffix:
+                        merged['comment_col'] = merged[comment_col_with_suffix]
+                        print(f"Using column '{comment_col_with_suffix}'")
+                    elif has_original:
+                        merged['comment_col'] = merged[comment_col_name]
+                        print(f"Using column '{comment_col_name}'")
+                    elif len(comment_dict) > 0:
+                        merged['comment_col'] = merged[mapping['id_col']].map(comment_dict)
+                        print("Using dictionary mapping approach")
+                    else:
+                        merged['comment_col'] = 'No comment'
+                        print("No valid method found - using 'No comment'")
                 else:
-                    merged['comment_col'] = None
+                    merged['comment_col'] = 'No comment'
+                    print("No comment column in mapping - using 'No comment'")
+                
+                # Check final result
+                print(f"\nFinal comment_col values: {merged['comment_col'].head(5).tolist()}")
+                print(f"NaN values in comment_col: {merged['comment_col'].isna().sum()}")
+                
+                # Make sure all comment values are strings and replace NaN with 'No comment'
+                merged['comment_col'] = merged['comment_col'].fillna('No comment')
+                merged['comment_col'] = merged['comment_col'].astype(str)
+                merged['comment_col'] = merged['comment_col'].replace('nan', 'No comment')
+                merged['comment_col'] = merged['comment_col'].replace('None', 'No comment')
+                
+                print(f"After cleaning - final comment_col values: {merged['comment_col'].head(5).tolist()}")
+                print(f"Final NaN values in comment_col: {merged['comment_col'].isna().sum()}")
                 
                 # Calculate unsettled amount (handle NaN values)
                 merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['amount_col'].fillna(0)
+                
+                # Cleanup debug columns before concatenation
+                if 'debug_comment1' in merged.columns:
+                    merged = merged.drop(columns=['debug_comment1'])
+                if 'debug_comment2' in merged.columns:
+                    merged = merged.drop(columns=['debug_comment2'])
+                if 'debug_comment3' in merged.columns:
+                    merged = merged.drop(columns=['debug_comment3'])
 
-                # Add to final DataFrame
+                # Add to final DataFrame - ensure we include all columns
                 final_merged_data = pd.concat([
                     final_merged_data,
-                    merged[merged_data.columns]
+                    merged
                 ])
+                
+                print(f"==== FINISHED PROCESSING {app_name.upper()} ====\n")
 
             except Exception as e:
                 print(f"\n[{app_name}] Error: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         # Add unprocessed records from other apps
         processed_apps = set(self.settlement_files.keys())
         unprocessed_data = merged_data[~merged_data['ONDCapp'].isin(processed_apps)]
         final_merged_data = pd.concat([final_merged_data, unprocessed_data])
+
+        # Print final statistics
+        print(f"\nFINAL DATA STATISTICS:")
+        print(f"Total rows: {len(final_merged_data)}")
+        print(f"Comment column values:")
+        print(final_merged_data['comment_col'].value_counts().head(10))
+        print(f"NaN values in comment_col: {final_merged_data['comment_col'].isna().sum()}")
 
         # Add result column based on conditions
         conditions = [
@@ -561,12 +692,14 @@ class Process:
         print(f"Final rows: {final_count}")
         print(f"Settlement-only rows: {settlement_only}")
 
-        # Ensure consistent column order
+        # Make sure to include the result column in the returned data
         columns = ['insertDT', 'TicketNUmber', 'order_id', 'transaction_ref_no', 'ONDCapp', 
             'total_amount', 'QRCodePrice', 'booking_status', 'descCode', 'Remark', 
-            'amount_col', 'settle_col', 'unsettled', 'comment_col']
+            'amount_col', 'settle_col', 'unsettled', 'comment_col', 'result']
         
-        return final_merged_data[columns]
+        # Filter columns that exist in the DataFrame to avoid KeyErrors
+        existing_columns = [col for col in columns if col in final_merged_data.columns]
+        return final_merged_data[existing_columns]
 
     def _summarize_transactions(self):
         grouped_data = self.merged_data.groupby(['ONDCapp', 'insertDT']).agg({
