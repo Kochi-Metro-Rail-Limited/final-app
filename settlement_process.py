@@ -544,7 +544,7 @@ class Process:
                     how='outer',
                     suffixes=('', '_settlement')  # Important: Avoid column name conflicts
                 )
-                
+               
                 print(f"After merge: {len(merged)} rows")
                 print(f"All columns after merge: {merged.columns.tolist()}")
                 
@@ -628,7 +628,10 @@ class Process:
                 print(f"Final NaN values in comment_col: {merged['comment_col'].isna().sum()}")
                 
                 # Calculate unsettled amount (handle NaN values)
-                merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['amount_col'].fillna(0)
+                if app_name in ['redbus', 'rapido']:
+                    merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['amount_col'].fillna(0)
+                else:
+                    merged['unsettled'] = merged['QRCodePrice'].fillna(0) - merged['settle_col'].fillna(0)
                 
                 # Cleanup debug columns before concatenation
                 if 'debug_comment1' in merged.columns:
